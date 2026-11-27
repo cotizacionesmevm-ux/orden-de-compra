@@ -117,6 +117,16 @@
   .chip.error i{background:#ff5a4f}.chip.sin-conexion i{background:#9aa0a6}
   .engrane{border:1px solid #444;background:#1d1d1d;color:#fff;border-radius:10px;width:40px;height:40px;padding:0;font-size:20px;line-height:1}
   .engrane:hover{background:#2a2a2a}
+  #modalOC{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-start;justify-content:center;z-index:50;overflow:auto;padding:24px 12px}
+  #modalOC.abierto{display:flex}
+  #modalOC .panel{background:var(--card);border-radius:14px;max-width:620px;width:100%;padding:18px 18px 22px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  #modalOC .cab{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  #modalOC .cab h2{margin:0;font-size:17px}
+  .dv-orden .acc{display:flex;gap:6px;flex-shrink:0}
+  .dv-orden button.borrar-oc{color:var(--err);border-color:var(--err);min-width:84px}
+  .dv-orden button.borrar-oc.confirma,html[data-tema="oscuro"] .dv-orden button.borrar-oc.confirma{background:#c62828;border-color:#c62828;color:#fff}
+  html[data-tema="oscuro"] .dv-orden button.borrar-oc{color:#ff9a90;border-color:#a8433b}
+  html[data-tema="oscuro"] #modalOC{background:rgba(0,0,0,.65)}
   #modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-start;justify-content:center;z-index:50;overflow:auto;padding:24px 12px}
   #modal.abierto{display:flex}
   #modal .panel{background:var(--card);border-radius:14px;max-width:560px;width:100%;padding:18px 18px 22px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
@@ -173,6 +183,7 @@
   </div>
   <div class="hdr-der">
     <button type="button" id="chipSync" class="chip" hidden title="Estado de Google Drive"><i></i><span></span></button>
+    <button type="button" id="btnOrdenes" class="engrane" title="Órdenes creadas" aria-label="Órdenes creadas">☰</button>
     <button type="button" id="btnTema" class="engrane tema-btn" title="Modo día / noche" aria-label="Cambiar a modo noche">☾</button>
     <button type="button" id="btnConfig" class="engrane" title="Configuración" aria-label="Configuración">⚙</button>
   </div>
@@ -283,6 +294,15 @@
     <h3 style="margin-top:18px">Órdenes guardadas</h3>
     <div id="dvLista" class="dv-lista"></div>
     <p class="dv-nota">Los PDF se quedan en Drive y solo se descargan cuando tocas «Descargar».</p>
+  </div>
+</div>
+
+<div id="modalOC" class="modal-oc" role="dialog" aria-modal="true" aria-labelledby="ocTitulo">
+  <div class="panel">
+    <div class="cab"><h2 id="ocTitulo">Órdenes creadas</h2><button type="button" id="btnCerrarOC">Cerrar</button></div>
+    <div id="ocMsg" class="dv-err" hidden></div>
+    <div id="ocLista" class="dv-lista" style="max-height:none"></div>
+    <p class="dv-nota">«Eliminar» borra la orden en todos tus dispositivos y en Google Drive: sus datos salen de la base y su PDF se quita de la carpeta (Drive lo guarda 30 días en su papelera). Su folio no se vuelve a usar.</p>
   </div>
 </div>
 
@@ -902,6 +922,19 @@ window.OC_ASSETS = {
       guardarDb();
     }
 
+    /* ---------- PDFs de órdenes eliminadas: se mandan a la papelera de Drive (recuperables) ---------- */
+    async function papelera() {
+      var claves = (await o.kv.keys()).filter(function (k) { return k.indexOf('papelera:') === 0; });
+      for (var i = 0; i < claves.length; i++) {
+        var fid = await o.kv.get(claves[i]);
+        if (fid) {
+          try { await api('PATCH', DRIVE + '/files/' + fid + '?fields=id', JSON.stringify({ trashed: true }), 'application/json'); }
+          catch (e) { if (e.status !== 404) throw e; }
+        }
+        await o.kv.del(claves[i]);
+      }
+    }
+
     /* ---------- Ciclo de sincronización ---------- */
     async function ciclo() {
       if (!cfg.conectado) { estado('desconectado'); return; }
@@ -909,6 +942,7 @@ window.OC_ASSETS = {
       estado('sincronizando');
       if (!cfg.ids || !cfg.ids.db) await estructura();
       await subirPdfs();
+      await papelera();
       var listo = false;
       for (var intento = 0; intento < 5 && !listo; intento++) {
         var rem;
@@ -1029,6 +1063,19 @@ window.OC_ASSETS = {
       });
       if (cambio) { guardarDb(); marcarPend(true); }
     }
+    // Baja de una orden: queda registrada como eliminada (se sincroniza como baja) y su folio no se vuelve a usar
+    async function eliminarOrden(id) {
+      var r = db.registros[id];
+      if (!r || r.borrado) return;
+      var t = ahora();
+      var driveId = r.pdf && r.pdf.driveId;
+      // Se quitan los datos de la orden; solo queda la marca de baja con el folio (para que no se repita)
+      db.registros[id] = { id: id, tipo: 'orden', folio: r.folio, borrado: true, eliminado: t, modificado: t };
+      guardarDb(); marcarPend(true);
+      await o.kv.del('pdf:' + id);                                   // si no se había subido, ya no se sube
+      if (driveId) await o.kv.set('papelera:' + id, driveId);
+      if (cfg.conectado) { estado('pendiente'); programar(300); }
+    }
     function folios() {
       return Object.keys(db.registros).map(function (k) { return db.registros[k].folio; });
     }
@@ -1050,7 +1097,7 @@ window.OC_ASSETS = {
     return {
       info: info, conectar: conectar, desconectar: desconectar, cambiarCuenta: cambiarCuenta,
       sincronizar: sincronizar, programar: programar, registrarOrden: registrarOrden,
-      migrarFolios: migrarFolios, folios: folios, ordenes: ordenes, pdfDe: pdfDe,
+      migrarFolios: migrarFolios, eliminarOrden: eliminarOrden, folios: folios, ordenes: ordenes, pdfDe: pdfDe,
       conectado: function () { return !!cfg.conectado; },
       tieneToken: function () { return !!token && Date.now() < tokenExp - 60000; },
       _db: function () { return db; }
@@ -1362,6 +1409,7 @@ window.OC_ASSETS = {
       else ln.innerHTML = 'Google Drive: <b>subiendo…</b>';
     }
     if ($('modal').classList.contains('abierto')) pintarLista();
+    pintarOC();
   }
   function pintarLista(){
     var l = sync.ordenes();
@@ -1392,6 +1440,51 @@ window.OC_ASSETS = {
     });
   }
   function alerta(e){ var x = $('dvError'); x.hidden = false; x.textContent = e && e.message || String(e); }
+
+  /* ---------- Órdenes creadas (ver y eliminar) ---------- */
+  function guardarPdfLocal(p){
+    if (window.AndroidOC){ var r = AndroidOC.guardarPdf(p.nombre, bytesAB64(p.bytes)); if (r !== 'ok') throw new Error(r); return 'Guardado ✓'; }
+    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([p.bytes], {type:'application/pdf'}));
+    a.download = p.nombre; document.body.appendChild(a); a.click(); a.remove(); return 'Descargado ✓';
+  }
+  function pintarOC(){
+    if (!$('modalOC').classList.contains('abierto')) return;
+    var l = sync.ordenes();
+    if (!l.length){ $('ocLista').innerHTML = '<div class="dv-orden"><div><small>Todavía no hay órdenes creadas.</small></div></div>'; return; }
+    $('ocLista').innerHTML = l.map(function(r){
+      var enDrive = r.pdf && r.pdf.driveId;
+      var est = sync.conectado() ? (enDrive ? ' · En Drive' : ' · Pendiente de subir') : '';
+      return '<div class="dv-orden"><div><b>OC '+esc(r.folio)+'</b> · '+esc(r.fecha||'')+' · '+OC.fmtMoney(Math.round((r.total||0)*100))+
+        '<small>'+esc(r.proveedor||'')+' · '+(r.items?r.items.length:0)+' artículo(s)'+est+'</small></div>'+
+        '<div class="acc"><button type="button" data-ver="'+esc(r.id)+'">Descargar</button>'+
+        '<button type="button" class="borrar-oc" data-borrar="'+esc(r.id)+'" data-folio="'+esc(r.folio)+'">Eliminar</button></div></div>';
+    }).join('');
+    $('ocLista').querySelectorAll('[data-ver]').forEach(function(b){
+      b.addEventListener('click', async function(){
+        b.disabled = true; var txt = b.textContent; b.textContent = 'Descargando…'; $('ocMsg').hidden = true;
+        try { b.textContent = guardarPdfLocal(await sync.pdfDe(b.getAttribute('data-ver'))); }
+        catch(e){ b.textContent = txt; b.disabled = false; $('ocMsg').hidden = false; $('ocMsg').textContent = e.message || String(e); return; }
+        setTimeout(function(){ b.textContent = txt; b.disabled = false; }, 2500);
+      });
+    });
+    $('ocLista').querySelectorAll('[data-borrar]').forEach(function(b){
+      var conf = 0;
+      b.addEventListener('click', async function(){
+        if (Date.now() - conf > 4000){
+          conf = Date.now(); b.textContent = '¿Seguro?'; b.classList.add('confirma'); b.title = 'Toca otra vez para eliminar la OC '+b.getAttribute('data-folio');
+          setTimeout(function(){ if (b.isConnected && conf) { b.textContent = 'Eliminar'; b.classList.remove('confirma'); } }, 4000);
+          return;
+        }
+        conf = 0; b.disabled = true; b.textContent = 'Eliminando…';
+        try { await sync.eliminarOrden(b.getAttribute('data-borrar')); }
+        catch(e){ $('ocMsg').hidden = false; $('ocMsg').textContent = e.message || String(e); }
+        pintarOC();
+      });
+    });
+  }
+  $('btnOrdenes').addEventListener('click', function(){ $('modalOC').classList.add('abierto'); $('ocMsg').hidden = true; pintarOC(); });
+  $('btnCerrarOC').addEventListener('click', function(){ $('modalOC').classList.remove('abierto'); });
+  $('modalOC').addEventListener('click', function(e){ if (e.target === $('modalOC')) $('modalOC').classList.remove('abierto'); });
 
   sync = OCSync.crearSync({
     fetch: function(u, o){ return fetch(u, o); },
