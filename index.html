@@ -7,6 +7,14 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icono-192.png">
 <meta name="theme-color" content="#111111">
+<meta name="color-scheme" content="light dark">
+<script>
+  (function(){
+    var t = null; try { t = localStorage.getItem('oc_tema'); } catch(e){}
+    if (t !== 'oscuro' && t !== 'claro') t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'oscuro' : 'claro';
+    document.documentElement.setAttribute('data-tema', t);
+  })();
+</script>
 <style>
   :root{
     --bg:#f4f4f2; --card:#fff; --ink:#1b1b1b; --muted:#6b6b6b; --line:#e2e2de;
@@ -16,6 +24,7 @@
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "Century Gothic","URW Gothic","Avenir Next",system-ui,sans-serif}
   header{background:#111;color:#fff;padding:18px 22px;display:flex;align-items:center;gap:14px}
   header .marca{width:38px;height:38px;border-radius:8px;background:var(--amarillo);color:#111;display:grid;place-items:center;font-weight:800;font-size:15px}
+  header .marca{flex-shrink:0}
   header h1{margin:0;font-size:19px;font-weight:700}
   header p{margin:2px 0 0;color:#bbb;font-size:13px}
   main{max-width:1280px;margin:0 auto;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,560px);gap:20px;align-items:start}
@@ -128,7 +137,31 @@
   .dv-orden div{flex:1;min-width:0}
   .dv-orden small{display:block;color:var(--muted)}
   .dv-orden button{padding:6px 10px;font-size:13px}
-  @media (max-width:700px){ .chip span{display:none} .chip{padding:8px} }
+  @media (max-width:700px){ .chip span{display:none} .chip{padding:8px} .engrane{width:36px;height:36px;font-size:17px} .hdr-der{gap:6px} }
+
+  /* ---- Modo noche ---- */
+  .tema-btn{font-size:18px}
+  html[data-tema="oscuro"]{--bg:#121212;--card:#1c1c1e;--ink:#ececec;--muted:#9c9c9c;--line:#2f2f32;--ok:#6fdc95;--err:#ff8a80;color-scheme:dark}
+  html[data-tema="oscuro"] header{border-bottom:1px solid #262626}
+  html[data-tema="oscuro"] input,html[data-tema="oscuro"] textarea{background:#262628;border-color:#3a3a3d;color:var(--ink)}
+  html[data-tema="oscuro"] input[readonly]{background:#202022;color:#b5b5b5}
+  html[data-tema="oscuro"] input:focus,html[data-tema="oscuro"] textarea:focus{border-color:var(--amarillo)}
+  html[data-tema="oscuro"] button{background:#262628;border-color:#555;color:var(--ink)}
+  html[data-tema="oscuro"] button:hover{background:#303033}
+  html[data-tema="oscuro"] button.prim{background:var(--amarillo);border-color:var(--amarillo);color:#111}
+  html[data-tema="oscuro"] button.prim:hover{background:#ffd31a}
+  html[data-tema="oscuro"] .chip,html[data-tema="oscuro"] .engrane{background:#1d1d1d;border-color:#444;color:#ddd}
+  html[data-tema="oscuro"] .del{background:none;color:#888}
+  html[data-tema="oscuro"] .card h2 .n{background:var(--amarillo);color:#111}
+  html[data-tema="oscuro"] #drop{background:#202022;border-color:#444}
+  html[data-tema="oscuro"] #drop.over{background:#2c2710;border-color:var(--amarillo)}
+  html[data-tema="oscuro"] .estado.ok{background:#12301e;color:#7fe0a3}
+  html[data-tema="oscuro"] .estado.err{background:#3a1715;color:#ff9a90}
+  html[data-tema="oscuro"] .estado.info{background:#352d0e;color:#ffd666}
+  html[data-tema="oscuro"] #pages{background:#2a2a2d}
+  html[data-tema="oscuro"] #pages .vacio{color:#aaa}
+  html[data-tema="oscuro"] .dv-err{background:#3a1715;color:#ff9a90}
+  html[data-tema="oscuro"] #modal{background:rgba(0,0,0,.65)}
 </style>
 </head>
 <body>
@@ -140,6 +173,7 @@
   </div>
   <div class="hdr-der">
     <button type="button" id="chipSync" class="chip" hidden title="Estado de Google Drive"><i></i><span></span></button>
+    <button type="button" id="btnTema" class="engrane tema-btn" title="Modo día / noche" aria-label="Cambiar a modo noche">☾</button>
     <button type="button" id="btnConfig" class="engrane" title="Configuración" aria-label="Configuración">⚙</button>
   </div>
 </header>
@@ -1424,6 +1458,26 @@ window.OC_ASSETS = {
   if (!window.AndroidOC && location.protocol === 'https:' && 'serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(function(e){ console.warn(e); });
   }
+
+  /* ---------- Modo día / noche ---------- */
+  function aplicarTema(t, guardar){
+    document.documentElement.setAttribute('data-tema', t);
+    var oscuro = t === 'oscuro';
+    $('btnTema').textContent = oscuro ? '☀' : '☾';
+    $('btnTema').setAttribute('aria-label', oscuro ? 'Cambiar a modo día' : 'Cambiar a modo noche');
+    $('btnTema').title = oscuro ? 'Modo día' : 'Modo noche';
+    if (guardar){ try { localStorage.setItem('oc_tema', t); } catch(e){} }
+    if (window.AndroidOC && AndroidOC.tema) { try { AndroidOC.tema(oscuro); } catch(e){} }
+  }
+  aplicarTema(document.documentElement.getAttribute('data-tema') || 'claro', false);
+  $('btnTema').addEventListener('click', function(){
+    aplicarTema(document.documentElement.getAttribute('data-tema') === 'oscuro' ? 'claro' : 'oscuro', true);
+  });
+  // Si nunca se eligió, seguir el modo del sistema
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e){
+    var g = null; try { g = localStorage.getItem('oc_tema'); } catch(x){}
+    if (!g) aplicarTema(e.matches ? 'oscuro' : 'claro', false);
+  });
 
   refrescarFechaFolio();
   pintarTabla();
